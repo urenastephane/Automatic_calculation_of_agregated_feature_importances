@@ -31,9 +31,7 @@ sqlContext=SQLContext(sc)
 
 
 print("------ reading data -------")
-data=sqlContext.read.parquet("6.1.2.FinalSeq2J2EvtsToKeep10perCent.parquet").sample(0.5)
-#data=sqlContext.read.parquet("../preprocessing/8-9-10.createNewFeaturesLastFilters/6.1.2.FinalSeq2J2EvtsToKeep10perCent.parquet").sample(0.5)
-print("--- filtering outliers ----")
+data=sqlContext.read.parquet("data.parquet").sample(0.5)
 
 
 print("")
@@ -41,33 +39,24 @@ print(sc.uiWebUrl)
 
 print("--------- factorization of categorical values ------------")
 
-featTry=['seq','dow','first_dow','code_evt','ss_code_evt','libelle_agence','libelle_dro','libelle_agence_premier_evt_transport','libelle_dro_premier_evt_transport','agence_destination','v_code_premierevttransport_reel','code_service','lieu_evt','code_produit','code_postal_destinataire','code_postal_expediteur','v_socode','v_sum_mutables','v_sum_non_mutables','v_lieu_premierevttransport_reel','first_code_evt','first_lieu_evt','time','contractual_time_difference']
-
-
-
-featTry1=['seq','dow','first_dow','code_evt','code_service','lieu_evt','first_code_evt','first_lieu_evt','time','contractual_time_difference']
-#featTry=['seq','dow','first_dow','code_evt','ss_code_evt','code_service','lieu_evt','code_produit','code_postal_destinataire','code_postal_expediteur','v_lieu_premierevttransport_reel','first_code_evt','first_lieu_evt','time','contractual_time_difference']
-df=data[featTry]
+features=['seq','dow','first_dow','code_evt','ss_code_evt','libelle_agence','libelle_dro','libelle_agence_premier_evt_transport','libelle_dro_premier_evt_transport','agence_destination','v_code_premierevttransport_reel','code_service','lieu_evt','code_produit','code_postal_destinataire','code_postal_expediteur','v_socode','v_sum_mutables','v_sum_non_mutables','v_lieu_premierevttransport_reel','first_code_evt','first_lieu_evt','time','contractual_time_difference']
+df=data[features]
 df.show(1)
 print(df.dtypes)
-#time.sleep(100)
-#if df.schema[f].dataType == 'IntegerType' or df.schema[f].dataType == 'DoubleType':
 
-
-#'''
 print("------ train test split --------")
 (trainingData,testData)=data.randomSplit([0.7,0.3])
 
-################################################
-# REMARQUE: CONVERTIR LES DOW EN INT A L'AVENIR#
-################################################
 
+#############################################################################################
+print("---------------- STARTING AUTOMATIC PIPELINE CREATION ------------------------")######
+#############################################################################################
 
 catNames=[]
 catNames_index=[]
 catValIndexed=[]
 
-for f in featTry:
+for f in features:
 	if df.schema[f].dataType == StringType():
 		print(df.schema[f].name)
 		catNames.append(f)
@@ -78,13 +67,8 @@ for f in featTry:
 		cat=dict(zip(catNames,catValIndexed))
 	else:
 		print(f+" has not a well defined type or is a Double or String")
-print("printing cat, catNames, catNames_index, catValIndexed :")
-print(cat)
-print(catNames)
-print(catNames_index)
-print(catValIndexed)
 
-integ=['seq','dow','first_dow']
+integ=['seq']
 inputColsOhe=integ+catNames_index
 print("inputColsOhe")
 print(inputColsOhe)
@@ -96,9 +80,6 @@ for a in inputColsOhe:
 	else:
 		outputColsOhe.append(a+'_category')
 
-print("outputColsOhe")
-print(outputColsOhe)
-
 ohe = OneHotEncoderEstimator(inputCols=inputColsOhe,outputCols=outputColsOhe).setHandleInvalid("keep")
 
 
@@ -106,17 +87,12 @@ numeric=[]
 for f in featTry:
 	if df.schema[f].dataType == DoubleType() and df.schema[f].name not in integ:
 		numeric.append(df.schema[f].name)
-print("numeric")
-print(numeric)
 numericalAssembler=VectorAssembler(inputCols=numeric,outputCol='numerical_features')
 
 numericalScaler=MinMaxScaler(inputCol='numerical_features',outputCol='scaled_numerical_features')
 
 inputColsAssembler=outputColsOhe
 inputColsAssembler.append('scaled_numerical_features')
-print("inputColsAssembler")
-print(inputColsAssembler)
-########################################################### ERREUR VUE: le inputColsAssembler ne contenait rien, dorenavant c'est bon ###############################
 assembler= VectorAssembler(inputCols=inputColsAssembler,outputCol='features')
 
 labelCol="label"
@@ -129,49 +105,25 @@ steps=[ohe,numericalAssembler,numericalScaler,assembler]
 for a in steps:
 	catValIndexed.append(a)
 transformerStages=catValIndexed
-print("transformerStages")
-print(transformerStages)
-print(type(transformerStages))
-print(" ")
-print(" ")
-print(" ")
-
-
 transformerPipeline=Pipeline(stages=transformerStages)
-print("passed transformer Pipeline")
-print(transformerPipeline)
-
-##################################################################### ATTEMPT FOR PIPELINE #####################################################
 transformer=transformerPipeline.fit(trainingData)
-#print("passed transformer")
-
-#trainingData=[1,2]
-#transformer=Pipeline(stages=[])
-
-
 transformedTrainingData=transformer.transform(trainingData)
-#transformedTrainingData=transformer.transform(trainingData).persist(StorageLevel.MEMORY_AND_DISK)
 
-#print("------------ REGRESSION MODEL ---------------")
+print("------------ REGRESSION MODEL ---------------")
 modelPipeline=Pipeline(stages=[rf])
-#test=transformedTrainingData.drop(transformedTrainingData.columns[len(transformedTrainingData.columns) - 1])
 print("------------------------------------------ modelPipeline.fit(test).persist(StorageLevel.DISK_ONLY) ------------------------------------------------")
 model=modelPipeline.fit(transformedTrainingData)
-print("---------------- passed FIT PROBLEMATIC ------------------------")
+
+
+
+#############################################################################################
+print("---------------- STARTING FEATURE IMPORTANCE AGREGATION ------------------------")####
+#############################################################################################
+
 import pandas as pd
 pandasDF=pd.DataFrame(transformedTrainingData.schema["features"].metadata["ml_attr"]["attrs"]["numeric"]+transformedTrainingData.schema["features"].metadata["ml_attr"]["attrs"]["binary"]).sort_values("idx")
-
-#print(pandasDF)
 pandasDF['importance']=model.stages[-1].featureImportances.toArray()
-print("----------------------")
-print("pandasDF.sort_values('importance')")
-print(pandasDF.sort_values('importance'))
-print("----------------------")
-
 features=trainingData.schema.names
-print(features)
-print(type(features))
-
 
 def getCategorical(df):
 	tab=[]
@@ -185,21 +137,15 @@ def getCategorical(df):
 	new=list(t) 
 	return(new)
 
-
-#print("getCategorical(pandasDF)")
-#print(getCategorical(pandasDF))
 cat=(getCategorical(pandasDF))
-
 
 def hasNumbers(inputString):
 	return any(char.isdigit() for char in inputString)
-
-
-
+'''
 for a in pandasDF["name"]:
 	if 'numerical' in a:
 		print(a)
-
+'''
 
 def getNumerical(df):
 	b=[]
@@ -220,9 +166,6 @@ def getNumerical(df):
 
 
 num=getNumerical(pandasDF)
-#print(cat)
-#print(num)
-
 
 
 print("--------- begin last step ---------------")
@@ -252,13 +195,11 @@ for i in (range(0,len(cat))):
 				imp[i]=imp[i]+pandasDF["importance"][j]
 				print(pandasDF["importance"][j])
 				print(imp)
-	#idx=i			
-	#for j in num:
 
 print(feat)
 print(imp)
 
-
+# contains prints to check that the process is well behaving
 featNum=[]
 impNum=[0.0 for x in range(len(num))]
 for i in (range(0,len(num))):
@@ -283,7 +224,6 @@ for i in (range(0,len(num))):
 				impNum[i]=impNum[i]+pandasDF["importance"][j]
 				print(pandasDF["importance"][j])
 				print(impNum)
-	#idx=i			
 
 time=0.0
 ctime=0;0
@@ -297,11 +237,6 @@ numVal=[time,ctime]
 
 features=feat+numeric
 importances=imp+numVal
-
-
-print("")
-print("")
-###################################################################################################################################
 
 print(feat)
 print(imp)
